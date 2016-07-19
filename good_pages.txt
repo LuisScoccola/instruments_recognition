@@ -1,0 +1,13 @@
+https://gist.github.com/arunaugustine/5551446
+http://docs.scipy.org/doc/scipy-0.16.1/reference/generated/scipy.signal.spectrogram.html
+https://docs.python.org/2/library/aifc.htmlhttp://stackoverflow.com/questions/21489927/importing-audio-track-wav-or-aiff-in-python
+https://www.kaggle.com/c/whale-detection-challenge/forums/t/3824/interpreting-both-the-fft-and-the-spectogram
+http://theremin.music.uiowa.edu/MIS-Pitches-2012/MISBbClarinet2012.html
+https://cs.nyu.edu/~gazzillo/machine_learning/results.html
+http://cs229.stanford.edu/proj2015/010_report.pdf
+https://www.google.com.ar/?client=firefox-b#q=instrument+samples+machine+learning&gfe_rd=cr
+http://stackoverflow.com/questions/16767248/how-do-i-write-a-24-bit-wav-file-in-python
+https://gist.github.com/endolith/236567/
+http://cournape.github.io/audiolab/intro.html
+http://stackoverflow.com/questions/20434978/24-bit-audio-sample-into-int32-array-little-endian-wav-file
+
