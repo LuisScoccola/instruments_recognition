@@ -1,3 +1,8 @@
+samples:
+http://earmonk.com/free-sample-libraries/
+http://www.philharmonia.co.uk/explore/make_music/oboe
+
+else:
 https://gist.github.com/arunaugustine/5551446
 http://docs.scipy.org/doc/scipy-0.16.1/reference/generated/scipy.signal.spectrogram.html
 https://docs.python.org/2/library/aifc.htmlhttp://stackoverflow.com/questions/21489927/importing-audio-track-wav-or-aiff-in-python
