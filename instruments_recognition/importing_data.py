@@ -25,9 +25,11 @@ attack_duration = 0.4
 # TODO: very arbitrary
 threshold_wav = 30
 
-# input: a .wav file 
-# output: a vector of integers (one float per sample)
 def import16monowav(wav_file) :
+    """
+    input: a .wav file 
+    output: a vector of integers (one float per sample)
+    """
     samplerate, data = wavfile.read(wav_file)
     #return np.fromfile(open(wav_file),bitdepth)[24:]
     return data
@@ -38,12 +40,16 @@ def import16stereo1wav(wav_file) :
     res = [n for n,m in data]
     return res
 
-# normalize to a float in [-1,1]
 def normalize16bits(vector) :
+    """
+    normalize to a float in [-1,1]
+    """
     return [ sample/2**16. for sample in vector ]
 
-# kills first nad last samples under some threshold
 def killsilence_wav(wav_16bits) :
+    """
+    kills first and last samples under some threshold, of a integer array
+    """
     first = 0
     last = len(wav_16bits)-1
     while (abs(wav_16bits[first]) < threshold_wav) :
@@ -55,11 +61,12 @@ def killsilence_wav(wav_16bits) :
     return wav_16bits[first:last]
 
 
-# convert to float
-# input: a wav file
-# output: a vector of floats in [-1,1]
 # TODO: the silence should be removed later?
 def convert_to_float(ex,channels) :
+    """
+    input: a wav file
+    output: a vector of floats in [-1,1]
+    """
     if channels == 1 :
         imported = import16monowav(ex)
     else :
@@ -68,9 +75,11 @@ def convert_to_float(ex,channels) :
         
     
 # import wav, convert to float, take pieces and fourier transform each piece
-# input: a wav file
-# output: a list of transforms of windows of the audio
 def import_convert_transform2(ex,channels) :
+    """
+    input: a wav file
+    output: a list of transforms of windows of the audio
+    """
     # import wav and convert to float
     ex_float = convert_to_float(ex,channels)
     windows = attack_and_release(ex_float)
@@ -88,8 +97,10 @@ def import_convert_transform(ex,channels) :
     return transform_floats(windows[1])
 
 
-# given a float vector (signal) divide it in attack and the rest
 def attack_and_release(vec) :
+    """
+    given a float vector (signal) divide it in attack and release ("the rest")
+    """
     attack_samples_over2 = int(samplerate * attack_duration/2)
 #    print "the number of samples in the attack is: " + str(2*attack_samples_over2)
 #    print "the number of samples in the release is: " + str(4*attack_samples_over2)
@@ -105,8 +116,10 @@ alpha_tukey = 0.05
 
 howmuchtopad = 1000
 
-# given a signal of floats, apply window and transform
 def transform_floats(ex_float) :
+    """
+    given a signal of floats, apply window and transform
+    """
     # apply tukey window
     ex_windowed = signal.tukey(len(ex_float),alpha=0.05) * ex_float  
     # pad with some zeros
