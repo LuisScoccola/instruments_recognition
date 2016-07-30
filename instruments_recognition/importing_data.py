@@ -90,11 +90,32 @@ def import_convert_transform2(ex,channels) :
 
  
 # de comun
-def import_convert_transform(ex,channels) :
+def import_convert_transform_release(ex,channels) :
     # import wav and convert to float
     ex_float = convert_to_float(ex,channels)
     windows = attack_and_release(ex_float)
     return transform_floats(windows[1])
+
+def import_convert(ex,channels) :
+    # import wav and convert to float
+    ex_float = convert_to_float(ex,channels)
+    #windows = attack_and_release(ex_float)
+    return ex_float
+
+def import_convert_release(ex,channels) :
+    # import wav and convert to float
+    ex_float = convert_to_float(ex,channels)
+    windows = attack_and_release(ex_float)
+    return windows[1]
+
+
+
+def import_convert_transform_attack(ex,channels) :
+    # import wav and convert to float
+    ex_float = convert_to_float(ex,channels)
+    windows = attack_and_release(ex_float)
+    return transform_floats(windows[0])
+
 
 
 def attack_and_release(vec) :
@@ -201,7 +222,7 @@ def harmonics_energy(ex, frq_lbl) :
     peaks_energy_nor = [ harmonic_energy/tonic_energy for harmonic_energy in peaks_energy ]
     #the frequency of the peaks
     peaks_frequency = [ (frq_lbl[tonic_pos*n] if tonic_pos*n<len(frq_lbl) else 0.) for n in range(1,num_harmonics+1) ]
-    #print "the tonic is: " + str(peaks_frequency[0])
+    print("the tonic is: " + str(peaks_frequency[0]))
     return peaks_frequency, peaks_energy_nor
     
     
