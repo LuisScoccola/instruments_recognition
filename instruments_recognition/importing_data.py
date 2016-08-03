@@ -7,8 +7,244 @@ from scipy import signal
 from scipy.io import wavfile
 import numpy as np
 import glob
+import matplotlib.pyplot as plt
+
+import wave
 
 
+class FSignal:
+    """Represents an array of floats with a samplerate"""
+    #fsignal
+    #samplerate
+
+    def __init__(self, floats, samplerate):
+        self.fsignal = np.array(floats)
+        self.samplerate = samplerate
+
+    @classmethod
+    def from_wav_file(cls, wav_file):
+        """
+        input: a .wav file
+        """
+        wf = wave.open(wav_file)
+        samplerate = wf.getframerate()
+        bitdepth = wf.getsampwidth() * 8
+        print("the depth is: " + str(bitdepth))
+        channels = wf.getnchannels()
+        print("the number of channels is: " + str(channels))
+        length_sample = wf.getnframes()
+        print("the number of samples is: " + str(length_sample))
+        bitdepthnp = np.int8 if bitdepth == 8 else np.int16
+        imported = np.fromstring(wf.readframes(length_sample*channels), bitdepthnp)
+        wf.close()
+        if channels == 1:
+            imported1ch = imported
+        else :
+            # keep only left channel
+            imported1ch = [n for n,m in imported]
+        # normalize
+        tofloats = [ sample/(2**float(bitdepth)) for sample in imported1ch]
+        return cls(tofloats, samplerate)
+
+    @classmethod
+    def from_wav_file_and_clean(cls, wav_file):
+        a_signal = cls.from_wav_file(wav_file)
+        a_signal.kill_silence()
+        a_signal.normalize_signal()
+        a_signal.window()
+        return a_signal
+
+    def kill_silence(self):
+        """
+        kills the silence at the begining and end of signal
+        """
+        threshold = 0.000458
+        first = 0
+        last = len(self.fsignal)-1
+        while (abs(self.fsignal[first]) < threshold) :
+            first += 1
+        while (abs(self.fsignal[last]) < threshold) :
+            last -= 1
+        if first >= last :
+            raise ValueError('This signal seems to be pure noise!')
+        self.fsignal = self.fsignal[first:last]
+
+    def window(self):
+        floats = self.fsignal
+        #parameter for tukey window
+        alpha_tukey = 0.05
+        # apply tukey window
+        self.fsignal = signal.tukey(len(floats),alpha=0.05) * floats
+ 
+    def normalize_signal(self):
+        """
+        normalizes the signal so that the maximum is 1
+        """
+        self.fsignal = self.fsignal/max(abs(self.fsignal))
+    
+    def many_windows(self, howmany, duration):
+        """
+        returns a list of signals
+        """
+        nsamples_over2 = int(duration * self.samplerate/2)
+        nsamples = nsamples_over2 * 2
+        # pad the signal so it doesn't fail if it is too short
+        totalsignal = np.pad(self.fsignal,[(0,howmany*nsamples)],'constant')
+        return [ FSignal(totalsignal[n*nsamples_over2:nsamples+n*nsamples_over2], self.samplerate)
+                 for n in range(0,howmany) ]
+
+
+relevant_range_min = 100.
+relevant_range_max = 15000.
+class FSpectrum:
+    #spectrum
+    #freq_lbls
+    #samplerate
+
+    def __init__(self, fsignal):
+        #window the signal
+        fsignal.window()
+
+        floats = fsignal.fsignal
+        samplerate = fsignal.samplerate
+        self.samplerate = samplerate
+
+        howmuchtopad = 1000
+        # pad with some zeros
+        padded = np.pad(floats,[(howmuchtopad,howmuchtopad)],'constant')
+        # transform to frequency domain (since this is a real signal the transformed vector has half of the length)
+        transformed_complex = np.fft.rfft(padded)
+        # take absolute values
+        self.spectrum = list(map(abs,transformed_complex))
+        # compute frequencies for the xlabel
+        self.freq_lbls = np.fft.rfftfreq(len(padded),1/samplerate)
+        
+        # TODO: Plancherel's theorem does not seem to be holding :(
+        #print "norm of signal: " + str(rms(ex_windowed))
+        #print "norm of transformed: " + str(rms(ex_transformed))
+
+    def find_tonic_pos(self, relevant_range_min, relevant_range_max):
+        """
+        input: a transformed signal
+        output: the position in the array of the tonic (not the frequency of the tonic!)
+        """
+        spec = self.spectrum
+        # the total spectrum has len(spec) samples and the spectrum has 44100/2 frequencies
+        max_frequency = self.samplerate/2
+        specinitial = int(len(spec)/max_frequency * relevant_range_min)
+        specfinal = int(len(spec)/max_frequency * relevant_range_max)
+            # print("the minum relevant frequency is: " + str(frq_lbl[specinitial]))
+            # print("this is the actual maximum: " + str(frq_lbl[len(spec)-1]))
+            # print("this is the length of the specample: " + str(len(spec)))
+        # find tonic
+        tonic_pos = np.argmax(spec[specinitial:specfinal]) + specinitial
+        #print("the tonic is in: " + str(tonic_pos))
+        #print("the volume is: " + str(spec[tonic_pos]))
+        return tonic_pos
+
+    def find_tonic(self, relevant_range_min, relevant_range_max):
+        pos = self.find_tonic_pos(relevant_range_min, relevant_range_max)
+
+        spec = self.spectrum
+        max_frequency = self.samplerate/2
+        tonic_freq = pos/len(spec) * max_frequency
+        print("the tonic is: " + str(tonic_freq) + " Hz")
+        return tonic_freq
+
+    def frequency_energy(self, frequency):
+        max_frequency = self.samplerate/2
+        freq_pos = len(self.spectrum) * frequency/max_frequency
+        return sum(interval_to_integrate(self.spectrum,freq_pos))
+
+
+
+num_harm = 10
+class Harmonics:
+    """Represents a vector of volumes of harmonics"""
+    #volumes
+    #frequencies
+
+    def __init__(self, a_spectrum, a_tonic, num_harm):
+       self.frequencies = [ a_tonic * n for n in range(1,num_harm) ]
+       volumes_abs = [ a_spectrum.frequency_energy(frq) for frq in self.frequencies ]
+       volume_tonic = volumes_abs[0]
+       self.volumes = volumes_abs/volume_tonic
+
+
+howmanywindows = 4
+windowsduration = 0.12
+def signal_to_harmonics(a_signal):
+    """
+    input: a signal
+    output: a list of harmonics
+    """
+    a_spectrum = FSpectrum(a_signal)
+    tonic_freq = a_spectrum.find_tonic(relevant_range_min, relevant_range_max)
+
+    windows = a_signal.many_windows(howmanywindows, windowsduration)
+
+    the_volumes = [ rms(win.fsignal) for win in windows ]
+    the_volumes_rel = the_volumes/the_volumes[0]
+
+    the_harmonics = [ Harmonics(FSpectrum(win), tonic_freq, num_harm) for win in windows ]
+    return the_harmonics#, the_volumes_rel
+
+
+
+# interval of 200Hz centered at the note
+def interval_to_integrate(ex, peak) :
+    width_of_average = 200.
+    # the total spectrum has len(ex) samples and the spectrum has 44100/2 frequencies
+    max_frequency = samplerate/2
+    hz_in_samples = len(ex)/max_frequency * width_of_average
+    windowinitial = int(peak-hz_in_samples/2) 
+    windowfinal = int(peak+hz_in_samples/2)
+    #print "the length in samples of the average window is: " + str(windowfinal-windowinitial)
+    return ex[windowinitial:windowfinal]
+
+
+# root mean square of a vector
+def rms(vec) :
+    return np.sqrt(np.average(np.power(vec,2)))
+
+def sumofsquares(vec) :
+    return sum(np.power(vec,2))
+
+# l^2 norm of a vector
+def l2n(vec) :
+    return np.sqrt(sumofsquares(vec))
+
+
+### IMPORTING synthetic sinusoids (for testing)
+
+samplerate = 44100.
+Ts = 1.0/samplerate
+
+def gimme_sinusoid(freq) :
+    t = np.arange(0,1,Ts)
+    return np.sin(2*np.pi * freq * t)
+    
+def gimme_sinusoids(freq,harmonics_amp) :
+    n = 2
+    res = gimme_sinusoid(freq)
+    for amp in harmonics_amp : 
+        res += amp * gimme_sinusoid(n*freq)
+        n += 1
+    return res
+
+def gimme_sinusoids_noise(freq,harmonics_amp) :
+    signal = gimme_sinusoids(freq,harmonics_amp)
+    return signal + np.random.normal(0,.5,len(signal))
+
+
+
+
+
+
+
+
+
+########################################## not used anymore
 
 ### IMPORTING DATA functions
 
@@ -78,7 +314,8 @@ def convert_to_float(ex,channels) :
 def import_convert_transform2(ex,channels) :
     """
     input: a wav file
-    output: a list of transforms of windows of the audio
+    output: 1) a list of transforms of windows of the audio
+            2) the relative volumes wrt the attack (first window)
     """
     # import wav and convert to float
     ex_float = convert_to_float(ex,channels)
@@ -148,7 +385,7 @@ def transform_floats(ex_float) :
     # transform to frequency domain (since this is a real signal the transformed vector has half of the length)
     ex_transformed_complex = np.fft.rfft(ex_padded)
     # take absolute values
-    ex_transformed = map(abs,ex_transformed_complex)
+    ex_transformed = list(map(abs,ex_transformed_complex))
     # compute frequencies for the xlabel
     freq_label = np.fft.rfftfreq(len(ex_padded),1/samplerate)
     
@@ -159,27 +396,6 @@ def transform_floats(ex_float) :
     return ex_transformed, freq_label
     #freq_label = [ np.arange(len(ex))/(len(ex)*2/samplerate) for ex in ex_transformed ]
 
-
-
-### IMPORTING synthetic sinusoids (for testing)
-
-Ts = 1.0/samplerate
-
-def gimme_sinusoid(freq) :
-    t = np.arange(0,1,Ts)
-    return np.sin(2*np.pi * freq * t)
-    
-def gimme_sinusoids(freq,harmonics_amp) :
-    n = 2
-    res = gimme_sinusoid(freq)
-    for amp in harmonics_amp : 
-        res += amp * gimme_sinusoid(n*freq)
-        n += 1
-    return res
-
-def gimme_sinusoids_noise(freq,harmonics_amp) :
-    signal = gimme_sinusoids(freq,harmonics_amp)
-    return signal + np.random.normal(0,.5,len(signal))
 
 
 
@@ -204,17 +420,27 @@ relevant_range_max = 15000.
 num_harmonics = 9
 
 
-def harmonics_energy(ex, frq_lbl) :
+# TODO: revise the use of ex = list(ex), doesn't make much sense to do this everywhere...
+
+# this is just for backwards compatibility
+def harmonics_energy_compatibility(ex, frq_lbl) :
+    """
+    just for now, delete this function later
+    """
     ex = list(ex)
-    # the total spectrum has len(ex) samples and the spectrum has 44100/2 frequencies
-    max_frequency = samplerate/2
-    exinitial = int(len(ex)/max_frequency * relevant_range_min)
-    exfinal = int(len(ex)/max_frequency * relevant_range_max)
-        # print("the minum relevant frequency is: " + str(frq_lbl[exinitial]))
-        # print("this is the actual maximum: " + str(frq_lbl[len(ex)-1]))
-        # print("this is the length of the example: " + str(len(ex)))
-    # find tonic
-    tonic_pos = np.argmax(ex[exinitial:exfinal]) + exinitial
+    tonic_pos = find_tonic(ex)
+    return harmonics_energy(ex,frq_lbl,tonic_pos)
+
+
+def harmonics_energy(ex, frq_lbl, tonic_pos) :
+    """
+    input: 1) a transformed signal 
+           2) a vector with the corresponding frequencies
+           3) the position of the tonic in the transformed signal
+    output: 1) a vector with the frequency of the harmonics
+            2) a vector with the volume of each harmonic (with respect to the volume of the tonic)
+    """
+    ex = list(ex)
     # compute the energy of the harmonics
     peaks_energy = [ sum(interval_to_integrate(ex,tonic_pos*n)) for n in range(1,num_harmonics+1) ]
     # and normalize with the energy of the tonic
@@ -222,34 +448,64 @@ def harmonics_energy(ex, frq_lbl) :
     peaks_energy_nor = [ harmonic_energy/tonic_energy for harmonic_energy in peaks_energy ]
     #the frequency of the peaks
     peaks_frequency = [ (frq_lbl[tonic_pos*n] if tonic_pos*n<len(frq_lbl) else 0.) for n in range(1,num_harmonics+1) ]
-    print("the tonic is: " + str(peaks_frequency[0]))
     return peaks_frequency, peaks_energy_nor
-    
-    
-# interval of 200Hz centered at the note
-def interval_to_integrate(ex, peak) :
-    width_of_average = 200.
-    # the total spectrum has len(ex) samples and the spectrum has 44100/2 frequencies
+
+
+def find_tonic(spec) :
+    """
+    input: a transformed signal
+    output: the position in the array of the tonic (not the frequency of the tonic!)
+    """
+    spec = list(spec)
+    # the total spectrum has len(spec) samples and the spectrum has 44100/2 frequencies
     max_frequency = samplerate/2
-    hz_in_samples = len(ex)/max_frequency * width_of_average
-    windowinitial = int(peak-hz_in_samples/2) 
-    windowfinal = int(peak+hz_in_samples/2)
-    #print "the length in samples of the average window is: " + str(windowfinal-windowinitial)
-    return ex[windowinitial:windowfinal]
+    specinitial = int(len(spec)/max_frequency * relevant_range_min)
+    specfinal = int(len(spec)/max_frequency * relevant_range_max)
+        # print("the minum relevant frequency is: " + str(frq_lbl[specinitial]))
+        # print("this is the actual maximum: " + str(frq_lbl[len(spec)-1]))
+        # print("this is the length of the specample: " + str(len(spec)))
+    # find tonic
+    tonic_pos = np.argmax(spec[specinitial:specfinal]) + specinitial
+    print("the tonic is in: " + str(tonic_pos))
+    #print("the volume is: " + str(spec[tonic_pos]))
+    return tonic_pos
 
+   
+def harmonics_energy_multiwindow(exs, frq_lbls) :
+    """
+    input: 1) a list of transformed signals (for example: [attack, release]) we assume
+              that the second vector is the release and compute the tonic based on that vector
+           2) a list of the corresponding frequency for each transformed signal
+    output: 1) a list of pairs (frequencies of harmonics, volume of harmonics wrt tonic)
+            2) a frequency indicating the tonic of the whole signal
+    """
+    release_num = 1
+    release = exs[release_num]
+    release_frequencies = frq_lbls[release_num]
+    # find tonic
+    tonic_pos = find_tonic(release)
+    # compute the harmonics of each window
+    peaks_freqs_energies = [ harmonics_energy(ex,frqs,tonic_pos) for ex, frqs in zip(exs, frq_lbls) ]
+    # the frequency of the tonic
+    tonic_freq = peaks_freqs_energies[release_num][0][0]
+    print("the tonic is: " + str(tonic_freq))
+    return peaks_freqs_energies, tonic_freq
 
-# root mean square of a vector
-def rms(vec) :
-    return np.sqrt(np.average(np.power(vec,2)))
-
-def sumofsquares(vec) :
-    return sum(np.power(vec,2))
-
-# l^2 norm of a vector
-def l2n(vec) :
-    return np.sqrt(sumofsquares(vec))
-
-
+def harmonics_energy_multiwindow_zipped(exsfrq_lbls) :
+    exs, frq_lbls = list(zip(*exsfrq_lbls))
+    release_num = 1
+    release = exs[release_num]
+    release_frequencies = frq_lbls[release_num]
+    # find tonic
+    tonic_pos = find_tonic(release)
+    # compute the harmonics of each window
+    peaks_freqs_energies = [ harmonics_energy(ex,frqs,tonic_pos) for ex, frqs in zip(exs, frq_lbls) ]
+    # the frequency of the tonic
+    tonic_freq = peaks_freqs_energies[release_num][0][0]
+    print("the tonic is: " + str(tonic_freq))
+    return peaks_freqs_energies, tonic_freq
+    
+    
 ## NOT USED ---------------------------------
 
 
@@ -287,15 +543,15 @@ def find_peaks_in_range(ex, frq_lbl) :
     return peaks_in_range
 
 
-def find_tonic(amplitudes) :
-    maximum = max(amplitudes)
-    arbitrary = 2.
-    first = 0
-    while (amplitudes[first] < maximum/arbitrary) :
-        first += 1
-    if first >= len(amplitudes) :
-        raise ValueError('No tonic!')
-    return first
+##def find_tonic2(amplitudes) :
+##    maximum = max(amplitudes)
+##    arbitrary = 2.
+##    first = 0
+##    while (amplitudes[first] < maximum/arbitrary) :
+##        first += 1
+##    if first >= len(amplitudes) :
+##        raise ValueError('No tonic!')
+##    return first
 
 
 # TODO: see if this parameter is ok
