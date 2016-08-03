@@ -7,6 +7,8 @@ from scipy import signal
 import numpy as np
 import glob
 import wave
+import re
+import os
 
 #for testing
 import matplotlib.pyplot as plt 
@@ -16,10 +18,12 @@ class FSignal:
     """Represents an array of floats together with a samplerate"""
     #fsignal
     #samplerate
+    #name
 
-    def __init__(self, floats, samplerate):
+    def __init__(self, floats, samplerate, name):
         self.fsignal = np.array(floats)
         self.samplerate = samplerate
+        self.name = name
 
     @classmethod
     def from_wav_file(cls, wav_file):
@@ -44,12 +48,15 @@ class FSignal:
             # keep only left channel
             imported1ch = imported[::2]
         # normalize
-        tofloats = imported1ch/(2**float(bitdepth))
-        return cls(tofloats, samplerate)
+        tofloats = imported1ch/(2**(float(bitdepth)-1))
+
+        name = re.sub(r'.wav', r'', os.path.basename(wav_file))
+        
+        return cls(tofloats, samplerate, name)
 
     # create from a wave file and: remove possible silence, normalize, and apply window
     @classmethod
-    def from_wav_file_and_clean(cls, wav_file):
+    def from_wav_file_and_clean(cls, wav_file) :
         """
         input: a .wav file
         output: an fsignal with silences removed, normalized, and windowed (fade in, fade out)
@@ -57,8 +64,33 @@ class FSignal:
         a_signal = cls.from_wav_file(wav_file)
         a_signal.kill_silence()
         a_signal.normalize_signal()
-        a_signal.window()
+        a_signal.simpl_window()
         return a_signal
+
+    def to_wav_file(self, directory) :
+        """
+        input: a directory (must have a slash at the end!)
+        effect: creates a mono 16bit .wav file with the signal
+        """
+        bitdepth = 16.
+
+        out_file = wave.open(directory + self.name + ".wav", 'wb')
+
+        # mono
+        out_file.setnchannels(1)
+        # samplerate
+        out_file.setframerate(self.samplerate)
+        # 16 bit
+        out_file.setsampwidth(2)
+
+        # this cast to integer is not the best thing in the world
+        # should apply dithering...
+        rawdata_int = (self.fsignal * (2**(float(bitdepth)-1))).astype(np.int16)
+        rawdata_byte = rawdata_int.tostring()
+        out_file.writeframes(rawdata_byte)
+
+        out_file.close()
+
 
     def kill_silence(self):
         """
@@ -77,15 +109,23 @@ class FSignal:
             raise ValueError('This signal seems to be pure noise!')
         self.fsignal = self.fsignal[first:last]
 
-    def window(self):
+    def window(self,alpha):
         """
         effect: applies a window (fade in, fade out)
         """
         floats = self.fsignal
-        #parameter for tukey window
-        # apply tukey window
-        self.fsignal = signal.tukey(len(floats),alpha=0.05) * floats
+        window = signal.tukey(len(floats),alpha = alpha)
+        # apply gaussian window
+        self.fsignal = window * floats
  
+    def simpl_window(self):
+        floats = self.fsignal
+        # parameter for tukey window
+        alpha_t = 0.05
+        # apply tukey window
+        self.fsignal = signal.tukey(len(floats),alpha=alpha_t) * floats
+ 
+
     def normalize_signal(self):
         """
         effect: normalizes the signal so that the maximum is 1
@@ -96,11 +136,13 @@ class FSignal:
         """
         returns a list of signals
         """
+        orig_name = self.name
+
         nsamples_over2 = int(duration * self.samplerate/2)
         nsamples = nsamples_over2 * 2
         # pad the signal so it doesn't fail if it is too short
         totalsignal = np.pad(self.fsignal,[(0,howmany*nsamples)],'constant')
-        return [ FSignal(totalsignal[n*nsamples_over2:nsamples+n*nsamples_over2], self.samplerate)
+        return [ FSignal(totalsignal[n*nsamples_over2:nsamples+n*nsamples_over2], self.samplerate, orig_name + "_window_" + str(n))
                  for n in range(0,howmany) ]
 
     def pad_a_little(self, sec):
@@ -154,30 +196,90 @@ class FSignal:
 #        print(squared_signal_integral[n_samp_over2*2:len_paded-1])
 #        print(squared_signal_integral[n_samp_over2*2:n_samp_over2*4])
 
-#        #plt.plot(local_volume)
-#        plt.plot(squared_signal_integral[::len_paded-n_samp_over2*2])
-#        plt.show()
-#        plt.plot(squared_signal_integral[n_samp_over2*2::])
-#        plt.show()
         # leave the input sample as we find it
         self.unpad_a_little(window_len)
 
-        res = FSignal(local_volume,self.samplerate)
-        #res.unpad_a_little(window_len)
-
-        #local_volume = [ squared_signal_integral[pos+n_samp_over2] - squared_signal_integral[pos-n_samp_over2]
-        #               for pos in range(0,len(squared_signal_integral)) ]
-
-        ##        integral_from_zero = [ 
+        res = FSignal(local_volume,self.samplerate, self.name + "_local_volume")
         return res
 
-    #def only_from_to(sec_start, sec_end):
-        #TODO
+    def from_to_samples(self, sample_start, sample_end):
+        """
+        out: the cropped sample from sample sample_start to sample sample_end
+        """
+        a_signal = self.fsignal[sample_start:sample_end]
+        return FSignal(a_signal, self.samplerate, self.name + "_crop_samp" + str(sample_start) + "to" + str(sample_end))
 
-#    def auto_crop(self):
-#        """
-#        output: a list of fsignals
-#        """
+    def from_to_sec(self, sec_start, sec_end):
+        """
+        out: the cropped sample from second sec_start to second sec_end
+        """
+        sample_start = self.samplerate * sec_start
+        sample_end = self.samplerate * sec_end
+        return self.from_to_samples(sample_start, sample_end)
+
+    def find_beats(self, threshold):
+        """
+        output: a list of pairs (bit_start, bit_end), where bit_start and bit_end
+                are the positions in the sample (in samples, *not* seconds)
+        """
+        local_volume_signal = self.local_volume().fsignal
+        N = len(local_volume_signal)
+
+        # attack = 30ms
+        attack = 0.03
+        samples_attack = int(attack * self.samplerate)
+        # hold = 15ms
+        hold = 0.015
+        samples_hold = int(hold * self.samplerate)
+        # release = 30ms
+        release = 0.03
+        samples_release = int(release * self.samplerate)
+
+        beats = []
+        pos = 0
+        while pos < N-1 :
+            if local_volume_signal[pos] > threshold :
+                beat_start = max(0, pos - samples_attack)
+
+                #print("found beat at pos: " + str(pos))
+
+                while pos < N-1 and np.max(local_volume_signal[pos:min(pos + samples_hold, N-1)]) > threshold :
+                    # hold 15 ms
+                    pos = min(pos + samples_hold, N-1)
+
+                # release
+                pos = min(pos + samples_release, N-1)
+
+                beat_end = pos
+                beats.append([beat_start, beat_end])
+            else :
+                pos += 1
+        return beats
+
+
+    def auto_crop(self, threshold):
+        """
+        output: a list of fsignals
+        """
+        beats_beg_end = self.find_beats(threshold)
+
+        # attack = 30ms
+        attack = 0.030
+        samples_attack = int(attack * self.samplerate)
+
+        # release = 30ms
+        release = 0.030
+        samples_release = int(release * self.samplerate)
+
+
+        res = [ self.from_to_samples(max(0,b-samples_attack),min(e+samples_release, len(self.fsignal)-1)) for b,e in beats_beg_end ]
+        # window
+        [ r.window(0.3) for r in res ]
+        # pad
+        [ r.pad_a_little(0.1) for r in res ]
+        return res
+
+
 
             
 
@@ -193,7 +295,7 @@ class FSpectrum:
 
     def __init__(self, fsignal):
         #window the signal
-        fsignal.window()
+        fsignal.simpl_window()
 
         floats = fsignal.fsignal
         samplerate = fsignal.samplerate
