@@ -145,6 +145,19 @@ class FSignal:
         return [ FSignal(totalsignal[n*nsamples_over2:nsamples+n*nsamples_over2], self.samplerate, orig_name + "_window_" + str(n))
                  for n in range(0,howmany) ]
 
+#    def attack_and_release(self, howmany, duration):
+#        """
+#        """
+#        orig_name = self.name
+#
+#        nsamples_over2 = int(duration * self.samplerate/2)
+#        nsamples = nsamples_over2 * 2
+#        # pad the signal so it doesn't fail if it is too short
+#        totalsignal = np.pad(self.fsignal,[(0,howmany*nsamples)],'constant')
+#        return [ FSignal(totalsignal[n*nsamples_over2:nsamples+n*nsamples_over2], self.samplerate, orig_name + "_window_" + str(n))
+#                 for n in range(0,howmany) ]
+
+
     def pad_a_little(self, sec):
         """
         effect: pads the signal sec seconds at the beggining and end
