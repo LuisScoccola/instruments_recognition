@@ -15,11 +15,13 @@ import matplotlib.pyplot as plt
 
 
 class FSignal:
-    """Represents an array of floats together with a samplerate"""
-    #fsignal
-    #samplerate
-    #name
-    #remember to add these variables to copy()
+    """
+    Represents an array of floats together with a samplerate
+    """
+
+    fsignal = np.array([])
+    samplerate = 0.
+    name = 'Untitled'
 
     def __init__(self, floats, samplerate, name):
         self.fsignal = np.array(floats)
@@ -67,6 +69,10 @@ class FSignal:
         a_signal.normalize_signal()
         a_signal.simpl_window()
         return a_signal
+
+    def plot(self) :
+        fig, axes = plt.subplots()
+        axes.plot(self.fsignal)
 
     def to_wav_file(self, directory) :
         """
@@ -132,30 +138,36 @@ class FSignal:
         """
         self.fsignal = self.fsignal/max(abs(self.fsignal))
     
-    def many_windows(self, howmany, duration):
+    def many_windows(self, howmanywindows = 4, windowsduration = 0.12):
         """
         returns a list of signals
         """
         orig_name = self.name
 
-        nsamples_over2 = int(duration * self.samplerate/2)
+        nsamples_over2 = int(windowsduration * self.samplerate/2)
         nsamples = nsamples_over2 * 2
         # pad the signal so it doesn't fail if it is too short
-        totalsignal = np.pad(self.fsignal,[(0,howmany*nsamples)],'constant')
+        totalsignal = np.pad(self.fsignal,[(0,howmanywindows*nsamples)],'constant')
         return [ FSignal(totalsignal[n*nsamples_over2:nsamples+n*nsamples_over2], self.samplerate, orig_name + "_window_" + str(n))
-                 for n in range(0,howmany) ]
+                 for n in range(0,howmanywindows) ]
 
-#    def attack_and_release(self, howmany, duration):
-#        """
-#        """
-#        orig_name = self.name
-#
-#        nsamples_over2 = int(duration * self.samplerate/2)
-#        nsamples = nsamples_over2 * 2
-#        # pad the signal so it doesn't fail if it is too short
-#        totalsignal = np.pad(self.fsignal,[(0,howmany*nsamples)],'constant')
-#        return [ FSignal(totalsignal[n*nsamples_over2:nsamples+n*nsamples_over2], self.samplerate, orig_name + "_window_" + str(n))
-#                 for n in range(0,howmany) ]
+##    def attack_and_release(self):
+##        """
+##        TODO: use time instead of position in vector
+##        """
+##        volume_signal = self.local_volume()
+##        end_attack = np.argmax(volume_signal.fsignal)
+##
+##        attack_window = self.from_to_samples(0,end_attack)
+##        release_window = self.from_to_samples(end_attack+1, len(self.fsignal)-1)
+
+##        orig_name = self.name
+##
+##        nsamples_over2 = int(duration * self.samplerate/2)
+##        nsamples = nsamples_over2 * 2
+##        # pad the signal so it doesn't fail if it is too short
+##        totalsignal = np.pad(self.fsignal,[(0,howmany*nsamples)],'constant')
+##        return [ attack_window, release_window ]
 
 
     def pad_a_little(self, sec):
@@ -183,30 +195,7 @@ class FSignal:
         output: an fsignals containing the "local volume" in each moment of self
         side effect: pads the signal
         """
-        #NO: the "localness" is 30 ms
-        # the "localness" is 100ms
-        window_len = 0.1
-        # pad so we can inegrate easily (this is reverted later)
-        self.pad_a_little(window_len)
-        num_samples_window = self.samplerate * window_len
-        n_samp_over2 = int(num_samples_window/2)
-        squared_signal = self.fsignal**2
-
-
-        len_paded = len(squared_signal)
-        window_len_samples = window_len * self.samplerate
-        squared_signal_integral = np.empty(len_paded) 
-        squared_signal_integral[0] = squared_signal[0]
-        for pos in range(1,len_paded-n_samp_over2) :
-            squared_signal_integral[pos] = squared_signal_integral[pos-1] + squared_signal[pos]
-        
-        local_volume = squared_signal_integral[n_samp_over2*2:len_paded-n_samp_over2*2] - squared_signal_integral[:len_paded-n_samp_over2*4]
-
-        # leave the input sample as we find it
-        self.unpad_a_little(window_len)
-
-        res = FSignal(local_volume,self.samplerate, self.name + "_local_volume")
-        return res
+        return Volume(self)
 
     def from_to_samples(self, sample_start, sample_end):
         """
@@ -227,8 +216,115 @@ class FSignal:
         volume_signal = self.local_volume()
         return volume_signal.find_beats_vs(threshold)
 
+    def auto_crop(self, threshold):
+        """
+        output: a list of fsignals
+        """
+        #TODO: when find_beats return *times* instead of sample position fix this!
+        beats_beg_end = self.find_beats(threshold)
+
+        # attack = 30ms
+        attack = 0.030
+        samples_attack = int(attack * self.samplerate)
+
+        # release = 30ms
+        release = 0.030
+        samples_release = int(release * self.samplerate)
+
+
+        res = [ self.from_to_samples(max(0,b-samples_attack),min(e+samples_release, len(self.fsignal)-1)) for b,e in beats_beg_end ]
+        # window
+        [ r.window(0.3) for r in res ]
+        # pad
+        [ r.pad_a_little(0.1) for r in res ]
+        return res
+
+    def downsample(self, times = 5):
+        factor = 2
+        for i in range(0,times) :
+            self.fsignal = signal.decimate(self.fsignal, factor, zero_phase = True)
+            self.samplerate /= float(factor)
+
+    def tempo(self, threshold_volume=10) :
+        volume_signal = self.local_volume()
+        return volume_signal.tempo_vs(threshold_volume)
+
+#    def tempo_vs(self, threshold_volume=10) :
+#        """
+#        TODO: fix this function (the tempo does not seem reasonable for a "reasonable" sample.)
+#               use a clustering algorithm to find the "shortest" beat so we can assume it is the semicroma (or croma)
+#        precondition: must be a volume signal
+#        output: an array with of the same size of self but with the current tempo in each position
+#        """
+#        beats = np.array([ beat_start for beat_start, beat_end in self.find_beats_vs(threshold_volume) ])
+#
+#        #distances between consecutive beats (in seconds)
+#        distances = (beats[1:] - beats[:len(beats)-1]).astype(float) / self.samplerate 
+#        print("computing tempo on " + str(len(distances)) + " beats")
+#
+#        fig, axes = plt.subplots()
+#        axes.hist2d(distances, [1 for d in distances], (50, 50), cmap=plt.cm.jet)
+##        fig.colorbar()
+#
+#
+#        tempo_fst_appr = np.average(distances)
+#        print("first approximation of tempo is: " + str(60. / tempo_fst_appr))
+##        # threshold for outliers
+##        thresh_outl = 1.5
+###        distances_wo_outliers = distances[ (distances < thresh_outl*tempo_fst_appr and
+###                                             distances > thresh_outl/tempo_fst_appr) ]
+###        distances_wo_outliers = distances[ distances < thresh_outl*tempo_fst_appr ]
+##
+##        distances_wo_outliers = list(filter(lambda x : (x < thresh_outl*tempo_fst_appr and
+##                                                        x > thresh_outl/tempo_fst_appr), distances))
+##
+##        print("but had " + str(len(distances)-len(distances_wo_outliers)) + " outliers")
+##
+##        if len(distances_wo_outliers) == 0 :
+##            print("Warning: finding the tempo of a beatless track")
+##            return
+##
+##        # minute in ms
+##        minute = 60.
+##        tempo = minute / np.average(distances_wo_outliers)
+#
+#        return 60. / tempo_fst_appr
+
+
+
+class Volume(FSignal) :
+
+    def __init__(self, a_signal, localness = 0.1):
+        window_len = localness
+        # pad so we can inegrate easily (this is reverted later)
+        a_signal.pad_a_little(window_len)
+        num_samples_window = a_signal.samplerate * window_len
+        n_samp_over2 = int(num_samples_window/2)
+        squared_signal = a_signal.fsignal**2
+
+        len_paded = len(squared_signal)
+        window_len_samples = window_len * a_signal.samplerate
+        squared_signal_integral = np.empty(len_paded) 
+        squared_signal_integral[0] = squared_signal[0]
+        for pos in range(1,len_paded-n_samp_over2) :
+            squared_signal_integral[pos] = squared_signal_integral[pos-1] + squared_signal[pos]
+        
+        local_volume = squared_signal_integral[n_samp_over2*2:len_paded-n_samp_over2*2] - squared_signal_integral[:len_paded-n_samp_over2*4]
+
+        # leave the input sample as we find it
+        a_signal.unpad_a_little(window_len)
+
+        FSignal.__init__(self, local_volume, a_signal.samplerate, a_signal.name + "_local_volume")
+
+    @classmethod
+    def downsampled_volume(self, a_signal, localness = 0.1, factor = 10.):
+        res = Volume.__init__(self, a_signal, localness)
+        res.fsignal = signal.decimate(res.fsignal, factor)
+        res.samplerate /= factor
+
     def find_beats_vs(self, threshold):
         """
+        TODO: should return *times*, not the sample position in the array
         precontidion: must be a volume signal
         output: a list of pairs (bit_start, bit_end), where bit_start and bit_end
                 are the positions in the sample (in samples, *not* seconds)
@@ -280,84 +376,15 @@ class FSignal:
         return beats
 
 
-    def auto_crop(self, threshold):
-        """
-        output: a list of fsignals
-        """
-        beats_beg_end = self.find_beats(threshold)
-
-        # attack = 30ms
-        attack = 0.030
-        samples_attack = int(attack * self.samplerate)
-
-        # release = 30ms
-        release = 0.030
-        samples_release = int(release * self.samplerate)
-
-
-        res = [ self.from_to_samples(max(0,b-samples_attack),min(e+samples_release, len(self.fsignal)-1)) for b,e in beats_beg_end ]
-        # window
-        [ r.window(0.3) for r in res ]
-        # pad
-        [ r.pad_a_little(0.1) for r in res ]
-        return res
-
-    #TODO: subclass VOLUME signal
-
-
-    def tempo(self, threshold_volume=10) :
-        volume_signal = self.local_volume()
-        return volume_signal.tempo_vs(threshold_volume)
-
-    def tempo_vs(self, threshold_volume=10) :
-        """
-        precondition: must be a volume signal
-        output: an array with of the same size of self but with the current tempo in each position
-        """
-        beats = np.array([ beat_start for beat_start, beat_end in self.find_beats_vs(threshold_volume) ])
-
-        #distances between consecutive beats (in seconds)
-        distances = (beats[1:] - beats[:len(beats)-1]).astype(float) / self.samplerate 
-        print("computing tempo on " + str(len(distances)) + " beats")
-
-        fig, axes = plt.subplots()
-        axes.hist2d(distances, [1 for d in distances], (50, 50), cmap=plt.cm.jet)
-#        fig.colorbar()
-
-
-        tempo_fst_appr = np.average(distances)
-        print("first approximation of tempo is: " + str(60. / tempo_fst_appr))
-#        # threshold for outliers
-#        thresh_outl = 1.5
-##        distances_wo_outliers = distances[ (distances < thresh_outl*tempo_fst_appr and
-##                                             distances > thresh_outl/tempo_fst_appr) ]
-##        distances_wo_outliers = distances[ distances < thresh_outl*tempo_fst_appr ]
-#
-#        distances_wo_outliers = list(filter(lambda x : (x < thresh_outl*tempo_fst_appr and
-#                                                        x > thresh_outl/tempo_fst_appr), distances))
-#
-#        print("but had " + str(len(distances)-len(distances_wo_outliers)) + " outliers")
-#
-#        if len(distances_wo_outliers) == 0 :
-#            print("Warning: finding the tempo of a beatless track")
-#            return
-#
-#        # minute in ms
-#        minute = 60.
-#        tempo = minute / np.average(distances_wo_outliers)
-
-        return 60. / tempo_fst_appr
-
-
 
 relevant_range_min = 100.
 relevant_range_max = 15000.
 howmuchtopad = 1000
 
 class FSpectrum:
-    #spectrum
-    #freq_lbls
-    #samplerate
+    spectrum = np.array([])
+    freq_lbls = np.array([])
+    samplerate = 0.
 
     def __init__(self, fsignal):
         #window the signal
@@ -379,6 +406,11 @@ class FSpectrum:
         # TODO: Plancherel's theorem does not seem to be holding :(
         #print "norm of signal: " + str(rms(ex_windowed))
         #print "norm of transformed: " + str(rms(ex_transformed))
+
+    def plot(self, minfreq_plot = 50., maxfreq_plot = 20000.):
+        fig, axes = plt.subplots()
+        #axes.set_xlim([minfreq_plot,maxfreq_plot])
+        axes.semilogx(self.spectrum)
 
     def find_tonic_pos(self, relevant_range_min, relevant_range_max):
         """
@@ -417,8 +449,8 @@ class FSpectrum:
 
 class Harmonics:
     """Represents a vector of volumes of harmonics"""
-    #volumes
-    #frequencies
+    volumes = []
+    frequencies = []
 
     def __init__(self, a_spectrum, a_tonic, num_harm = 10):
        self.frequencies = [ a_tonic * n for n in range(1,num_harm) ]
@@ -427,8 +459,6 @@ class Harmonics:
        self.volumes = volumes_abs/volume_tonic
 
 
-howmanywindows = 4
-windowsduration = 0.12
 def signal_to_harmonics(a_signal, num_harm = 10):
     """
     input: a signal
@@ -437,7 +467,7 @@ def signal_to_harmonics(a_signal, num_harm = 10):
     a_spectrum = FSpectrum(a_signal)
     tonic_freq = a_spectrum.find_tonic(relevant_range_min, relevant_range_max)
 
-    windows = a_signal.many_windows(howmanywindows, windowsduration)
+    windows = a_signal.many_windows()
 
     the_volumes = [ rms(win.fsignal) for win in windows ]
     the_volumes_rel = the_volumes/the_volumes[0]
